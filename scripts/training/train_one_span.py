@@ -1,8 +1,10 @@
 import json
-from transformers import DistilBertTokenizerFast, DistilBertForTokenClassification
+from transformers import AutoTokenizer, AutoModelForTokenClassification
 from transformers import TrainingArguments, Trainer, DataCollatorForTokenClassification
 from datasets import Dataset
-
+import numpy as np
+from sklearn.metrics import precision_recall_fscore_support
+from seqeval.metrics import classification_report as seqeval_report
 
 def load_data(file_path):
     data = []
@@ -29,7 +31,7 @@ def tokenize_and_align_labels_simplified(examples, tokenizer, label_to_id, marke
     all_markers = examples.get("markers", [])
 
     for i, offsets in enumerate(tokenized_inputs["offset_mapping"]):
-        example_labels = [0] * len(offsets)  # Initialize with 'O'
+        example_labels = [0] * len(offsets)
         example_markers = all_markers[i] if i < len(all_markers) else []
 
         for marker in example_markers:
@@ -43,7 +45,7 @@ def tokenize_and_align_labels_simplified(examples, tokenizer, label_to_id, marke
                             if start_char <= start < end_char:
                                 if token_idx < len(example_labels):
                                     example_labels[token_idx] = marker_label
-                            elif start < end_char and end > start_char:  # Handle partial overlaps
+                            elif start < end_char and end > start_char:
                                 if token_idx < len(example_labels) and example_labels[token_idx] == 0:
                                     example_labels[token_idx] = marker_label
         labels.append(example_labels)
@@ -54,48 +56,59 @@ def tokenize_and_align_labels_simplified(examples, tokenizer, label_to_id, marke
 if __name__ == "__main__":
     train_file = "train_rehydrated.jsonl"
     model_name = "distilbert-base-uncased"
-    output_dir_base = "distilbert-single-type-simplified"
-    batch_size = 16
+    output_dir_base = "distilbert-single-type-simplified-baseline"
+    batch_size = 32
+    gradient_accumulation_steps = 1
     learning_rate = 2e-5
-    num_epochs = 10
+    num_epochs = 3
+    marker_types_to_train = ["Action", "Actor", "Effect", "Evidence", "Victim"]
     marker_types_to_train = ["Action", "Actor", "Effect", "Evidence", "Victim"]
     all_results = {}
 
-    # Load data once
     train_data = load_data(train_file)
-    train_dataset = Dataset.from_list(train_data)
+    full_dataset = Dataset.from_list(train_data)
+    
+    train_testvalid = full_dataset.train_test_split(test_size=0.2, seed=42)
+    base_train_dataset = train_testvalid['train']
+    base_eval_dataset = train_testvalid['test']
 
-    tokenizer = DistilBertTokenizerFast.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     for marker_type in marker_types_to_train:
-        print(f"\n--- Training simplified model for marker type: {marker_type} ---")
+        print(f"\n--- Training BASELINE model for marker type: {marker_type} ---")
 
-        # Create simplified label maps
         label_to_id, id_to_label, num_labels = create_label_maps_simplified(marker_type)
-        print("Label to ID mapping:", label_to_id)
-        print("ID to Label mapping:", id_to_label)
-        print("Number of labels:", num_labels)
-
-        # Tokenize and align labels (simplified)
-        tokenized_train_dataset = train_dataset.map(
+        
+        tokenized_train_dataset = base_train_dataset.map(
+            tokenize_and_align_labels_simplified,
+            batched=True,
+            fn_kwargs={"tokenizer": tokenizer, "label_to_id": label_to_id, "marker_type": marker_type}
+        )
+        
+        tokenized_eval_dataset = base_eval_dataset.map(
             tokenize_and_align_labels_simplified,
             batched=True,
             fn_kwargs={"tokenizer": tokenizer, "label_to_id": label_to_id, "marker_type": marker_type}
         )
 
-        # Load a new model for each marker type (now with 2 output labels)
-        model = DistilBertForTokenClassification.from_pretrained(model_name, num_labels=num_labels)
+        model = AutoModelForTokenClassification.from_pretrained(model_name, num_labels=num_labels)
 
-        # Define training arguments
         output_dir = f"{output_dir_base}-{marker_type}"
         training_args = TrainingArguments(
             output_dir=output_dir,
             learning_rate=learning_rate,
             per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
             num_train_epochs=num_epochs,
             weight_decay=0.01,
             logging_dir=f'./logs-{marker_type}-simplified',
-            report_to="none"
+            report_to="none",
+            eval_strategy="epoch",
+            save_strategy="epoch",
+            load_best_model_at_end=True,
+            save_total_limit=1,
+            dataloader_num_workers=0
         )
 
         data_collator = DataCollatorForTokenClassification(tokenizer)
@@ -104,11 +117,11 @@ if __name__ == "__main__":
             model=model,
             args=training_args,
             train_dataset=tokenized_train_dataset,
+            eval_dataset=tokenized_eval_dataset,
             data_collator=data_collator,
             tokenizer=tokenizer,
         )
 
-        # Train
         print(f"Training simplified model for {marker_type}...")
         trainer.train()
         print(f"Training for {marker_type} finished.")

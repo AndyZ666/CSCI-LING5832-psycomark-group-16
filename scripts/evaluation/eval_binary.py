@@ -47,7 +47,6 @@ def evaluate_submission(reference_file, submission_file, output_path="."):
     Loads reference and submission data, matches them by ID, calculates metrics,
     and saves the results to scores.json.
     """
-    # 1. Load Data
     ref_data = load_jsonl(reference_file, id_field="_id", label_field="conspiracy")
     sub_data = load_jsonl(submission_file, id_field="_id", label_field="conspiracy")
 
@@ -55,7 +54,6 @@ def evaluate_submission(reference_file, submission_file, output_path="."):
         print("Evaluation failed: One or both input files are empty or invalid.")
         sys.exit(1)
 
-    # 2. Match Data and Filter
     matched_ids = sorted(list(set(ref_data.keys()) & set(sub_data.keys())))
 
     if not matched_ids:
@@ -67,18 +65,14 @@ def evaluate_submission(reference_file, submission_file, output_path="."):
 
     print(f"Matched {len(matched_ids)} samples for evaluation.")
 
-    # 3. Calculate Metrics
 
-    # Weighted F1 Score
     f1_weighted = f1_score(y_true, y_pred, labels=CATEGORIES, average='weighted', zero_division=0)
 
-    # Other useful metrics
     accuracy = accuracy_score(y_true, y_pred)
     precision, recall, f1_scores, _ = precision_recall_fscore_support(
         y_true, y_pred, labels=CATEGORIES, average=None, zero_division=0
     )
 
-    # 4. Prepare Scores for Output
     scores = {
               "f1_score_weighted": float(f1_weighted),
               "accuracy": float(accuracy),
@@ -86,7 +80,6 @@ def evaluate_submission(reference_file, submission_file, output_path="."):
               "f1_score_yes": float(f1_scores[CATEGORIES.index("Yes")]),
     }
 
-    # 5. Save Scores
     output_filename = os.path.join(output_path, "scores.json")
     os.makedirs(output_path, exist_ok=True)
 
@@ -103,7 +96,6 @@ def evaluate_submission(reference_file, submission_file, output_path="."):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate classification predictions.")
 
-    # Changed from positional to optional with a default
     parser.add_argument(
         "--reference-file",
         type=str,

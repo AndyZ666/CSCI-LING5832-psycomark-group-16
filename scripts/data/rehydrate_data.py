@@ -11,14 +11,11 @@ from markdown import markdown
 def markdown_to_text(markdown_string):
     """ Converts a markdown string to plaintext """
 
-    # md -> html -> text since BeautifulSoup can extract text cleanly
     html = markdown(markdown_string)
 
-    # remove code snippets
     html = re.sub(r'<pre>(.*?)</pre>', ' ', html)
     html = re.sub(r'<code>(.*?)</code >', ' ', html)
 
-    # extract text
     soup = BeautifulSoup(html, "html.parser")
     text = ' '.join(soup.findAll(string=True))
 
@@ -54,9 +51,9 @@ def rehydrate_comments(input_file, output_file):
                 item = json.loads(line)
                 if '_id' in item and item['_id'].startswith('t1_'):
                     comment_id_with_prefix = item['_id']
-                    comment_id_without_prefix = comment_id_with_prefix[3:] # Remove 't1_' prefix
+                    comment_id_without_prefix = comment_id_with_prefix[3:]
                     ids_to_fetch_with_prefix.append(comment_id_with_prefix)
-                    original_data_map[comment_id_with_prefix] = item # Store original data by full _id
+                    original_data_map[comment_id_with_prefix] = item
             except json.JSONDecodeError:
                 print(f"Skipping invalid JSON line: {line.strip()}")
 
@@ -64,10 +61,9 @@ def rehydrate_comments(input_file, output_file):
     fields = "body,subreddit,id"
     rehydrated_data = []
 
-    # Process IDs in batches of up to 500
     for i in tqdm(range(0, len(ids_to_fetch_with_prefix), 500), desc="Rehydrating comments"):
         batch_ids_with_prefix = ids_to_fetch_with_prefix[i:i + 500]
-        batch_ids_without_prefix = [comment_id[3:] for comment_id in batch_ids_with_prefix] # Remove prefix for the request
+        batch_ids_without_prefix = [comment_id[3:] for comment_id in batch_ids_with_prefix]
         params = {
             "ids": ",".join(batch_ids_without_prefix),
             "fields": fields
@@ -75,7 +71,7 @@ def rehydrate_comments(input_file, output_file):
 
         try:
             response = requests.get(base_url, params=params)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            response.raise_for_status()
             api_response = response.json()
 
             if "data" in api_response and isinstance(api_response["data"], list):
@@ -88,7 +84,7 @@ def rehydrate_comments(input_file, output_file):
                         rehydrated_comment = rehydrated_map[comment_id_without_prefix]
                         original_item = original_data_map[comment_id_with_prefix]
                         merged_item = {
-                            "_id": f"t1_{rehydrated_comment['id']}", # Add the prefix back to the _id in the output
+                            "_id": f"t1_{rehydrated_comment['id']}",
                             "text": preprocess(rehydrated_comment['body']),
                             "subreddit": rehydrated_comment['subreddit'],
                             "conspiracy": original_item.get("conspiracy"),
@@ -109,7 +105,6 @@ def rehydrate_comments(input_file, output_file):
             print(f"Error decoding JSON response for batch starting with id '{batch_ids_without_prefix[0]}'")
             continue
 
-    # Save the rehydrated data to the output file
     with open(output_file, 'w') as outfile:
         for item in rehydrated_data:
             outfile.write(json.dumps(item) + '\n')

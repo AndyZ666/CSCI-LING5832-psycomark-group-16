@@ -5,7 +5,6 @@ import argparse
 import re
 from typing import Dict, List, Set, Tuple
 
-# --- Configuration ---
 DEFAULT_TEST_FILE = "test.jsonl"
 DEFAULT_SUBMISSION_FILE = "submission_span.jsonl"
 DEFAULT_SCORES_FILE = "scores.json"
@@ -14,7 +13,6 @@ MARKER_TYPES = {"Action", "Actor", "Effect", "Evidence", "Victim"}
 DEFAULT_IOU_THRESHOLD = 0.5
 
 
-# --- Tokenization and Span Conversion ---
 
 def tokenize_text(text: str) -> List[Tuple[int, int]]:
     """
@@ -22,10 +20,7 @@ def tokenize_text(text: str) -> List[Tuple[int, int]]:
     Returns a list of (start_char, end_char) tuples for each token.
     This mimics simple NLP tokenizers without external libraries.
     """
-    # Matches words (\w+) or non-whitespace/non-word punctuation ([^\w\s])
-    # This ensures punctuation is treated as separate tokens.
     token_spans = []
-    # Use re.finditer to get all matches and their start/end indices
     for match in re.finditer(r"(\w+|[^\w\s])", text):
         token_spans.append((match.start(), match.end()))
     return token_spans
@@ -43,8 +38,6 @@ def char_span_to_token_set(
     covered_token_indices = set()
 
     for token_idx, (t_start, t_end) in enumerate(token_spans):
-        # Overlap exists if: (start_A < end_B) AND (end_A > start_B)
-        # Check for character overlap between marker span and token span
         if char_start < t_end and char_end > t_start:
             covered_token_indices.add(token_idx)
 
@@ -54,7 +47,7 @@ def char_span_to_token_set(
 def calculate_token_iou(set_a: Set[int], set_b: Set[int]) -> float:
     """Calculates IoU based on the intersection and union of token index sets."""
     if not set_a and not set_b:
-        return 1.0  # Both empty sets, perfect match
+        return 1.0
 
     intersection = set_a.intersection(set_b)
     union = set_a.union(set_b)
@@ -65,7 +58,6 @@ def calculate_token_iou(set_a: Set[int], set_b: Set[int]) -> float:
     return len(intersection) / len(union)
 
 
-# --- Data Handling and Evaluation ---
 
 def parse_args():
     """Parses command-line arguments for file paths and configuration."""
@@ -73,7 +65,6 @@ def parse_args():
         description="Evaluate span extraction predictions against ground truth using TOKEN-BASED Overlap F1 (IoU >= threshold)."
     )
 
-    # Positional Arguments (Codabench style)
     parser.add_argument(
         "--ground_truth_file",
         nargs='?',
@@ -93,7 +84,6 @@ def parse_args():
         help="Path to the output JSON file for Codabench scores. (Default: %(default)s)"
     )
 
-    # Optional Flag for Threshold
     parser.add_argument(
         "--iou_threshold",
         type=float,
@@ -152,15 +142,12 @@ def prepare_true_data(data: List[Dict]) -> Dict[str, Dict]:
     prepared = {}
     for item in data:
         doc_id = item.get('_id')
-        text = item.get('text', '')  # Text is MANDATORY for ground truth here
+        text = item.get('text', '')
         if not doc_id or not text:
-            # Skip documents without text (required for tokenization)
             continue
 
-        # 1. Tokenize the text once per document
         token_spans = tokenize_text(text)
 
-        # 2. Extract and prepare markers
         markers_list = [
             {'start': m.get('startIndex'), 'end': m.get('endIndex'), 'type': m.get('type'), 'matched': False}
             for m in item.get('markers', [])
@@ -184,32 +171,25 @@ def evaluate(true_data, pred_data, iou_threshold):
     if true_data is None or pred_data is None:
         return {"Error": "Data loading failed."}
 
-    # Prepare GT data: Tokenize text and prepare true markers
     true_docs = prepare_true_data(true_data)
 
-    # Prepare predicted markers (only character offsets needed)
     pred_markers_map = extract_markers(pred_data)
 
-    # Aggregate counters for all types
     total_tp, total_fp, total_fn = 0, 0, 0
     type_metrics = {t: {'tp': 0, 'fp': 0, 'fn': 0} for t in MARKER_TYPES}
 
-    # Only iterate over IDs present in the ground truth set
     all_ids = true_docs.keys()
 
     for doc_id in all_ids:
         true_doc = true_docs.get(doc_id)
 
-        # If true_doc is missing, it means the GT document was skipped because it lacked 'text',
-        # but we shouldn't run logic on it anyway.
         if not true_doc:
             continue
 
         true_spans = true_doc['markers']
-        token_spans = true_doc['token_spans']  # Use ground truth token spans
-        pred_spans = pred_markers_map.get(doc_id, [])  # Get predicted spans for this doc
+        token_spans = true_doc['token_spans']
+        pred_spans = pred_markers_map.get(doc_id, [])
 
-        # --- Matching Loop ---
         for true_span in true_spans:
             true_token_set = char_span_to_token_set(
                 true_span['start'], true_span['end'], token_spans
@@ -218,12 +198,10 @@ def evaluate(true_data, pred_data, iou_threshold):
             best_iou = -1.0
             best_pred_idx = -1
 
-            # 1. Find the best *unmatched* predicted span of the same type
             for pred_idx, pred_span in enumerate(pred_spans):
                 if pred_span['matched'] or pred_span['type'] != true_span['type']:
                     continue
 
-                # Convert predicted char span to token set using the GT token map
                 pred_token_set = char_span_to_token_set(
                     pred_span['start'], pred_span['end'], token_spans
                 )
@@ -234,23 +212,18 @@ def evaluate(true_data, pred_data, iou_threshold):
                     best_iou = iou
                     best_pred_idx = pred_idx
 
-            # 2. Check if the best match meets the IoU threshold
             if best_iou >= iou_threshold and best_pred_idx != -1:
-                # True Positive (TP)
                 total_tp += 1
                 type_metrics[true_span['type']]['tp'] += 1
                 true_span['matched'] = True
                 pred_spans[best_pred_idx]['matched'] = True
 
-        # 3. After matching, calculate FP and FN
 
-        # FN: Unmatched true spans
         for true_span in true_spans:
             if not true_span['matched']:
                 total_fn += 1
                 type_metrics[true_span['type']]['fn'] += 1
 
-        # FP: Unmatched predicted spans
         for pred_span in pred_spans:
             if not pred_span['matched']:
                 if pred_span['type'] in MARKER_TYPES:
@@ -260,7 +233,6 @@ def evaluate(true_data, pred_data, iou_threshold):
     final_results = {}
     all_f1_scores = []
 
-    # Calculate Per-Type Metrics
     for m_type in sorted(MARKER_TYPES):
         metrics = type_metrics[m_type]
         tp, fp, fn = metrics['tp'], metrics['fp'], metrics['fn']
@@ -275,11 +247,9 @@ def evaluate(true_data, pred_data, iou_threshold):
         final_results[f"R ({m_type})"] = recall
         final_results[f"F1 ({m_type})"] = f1
 
-    # Calculate Macro F1
     f1_macro = sum(all_f1_scores) / len(MARKER_TYPES) if MARKER_TYPES else 0
     final_results["F1 (Macro)"] = f1_macro
 
-    # Calculate Aggregate (Micro) Metrics
     precision_agg = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
     recall_agg = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
     f1_agg = 2 * (precision_agg * recall_agg) / (precision_agg + recall_agg) if (precision_agg + recall_agg) > 0 else 0
@@ -288,7 +258,6 @@ def evaluate(true_data, pred_data, iou_threshold):
     final_results["R (Agg)"] = recall_agg
     final_results["F1 (Agg)"] = f1_agg
 
-    # Store formatted strings for console output
     final_results_formatted = {
         "--- Per-Type Results (Token IoU) ---": "---"
     }
@@ -316,15 +285,12 @@ def save_scores_to_codabench(results, output_file):
     """
     scores = dict()
 
-    # Save Aggregate (Micro) Scores
     scores["F1_Aggregate_Token"]= results["F1 (Agg)"]
     scores["Precision_Aggregate_Token"]= results["P (Agg)"]
     scores["Recall_Aggregate_Token"]= results["R (Agg)"]
 
-    # Save Macro Score
     scores["F1_Macro_Token"]= results["F1 (Macro)"]
 
-    # Save Per-Type Scores
     for m_type in sorted(MARKER_TYPES):
         scores[f"F1_{m_type}_Token"] = results[f"F1 ({m_type})"]
         scores[f"Precision_{m_type}_Token"] = results[f"P ({m_type})"]
@@ -338,7 +304,6 @@ def save_scores_to_codabench(results, output_file):
 
 if __name__ == "__main__":
 
-    # 1. Parse Command-Line Arguments
     args = parse_args()
 
     TEST_FILE = args.ground_truth_file
@@ -350,7 +315,6 @@ if __name__ == "__main__":
     print(f"Ground Truth (must contain text): {TEST_FILE}")
     print(f"Predictions (character offsets): {SUBMISSION_FILE}")
 
-    # 2. Load Data
     true_data = load_jsonl(TEST_FILE)
     pred_data = load_jsonl(SUBMISSION_FILE)
 

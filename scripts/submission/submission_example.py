@@ -5,17 +5,13 @@ import os
 import zipfile
 from typing import List, Dict, Any
 
-# --- Configuration ---
-# Default file paths
 DEFAULT_INPUT_FILE = "dev_rehydrated.jsonl"
 DEFAULT_OUTPUT_ZIP = "submission.zip"
-TEMP_SUBMISSION_FILE = "submission.jsonl"  # The unzipped file name required by Codabench
+TEMP_SUBMISSION_FILE = "submission.jsonl"
 
-# Marker Types
 MARKER_TYPES = ["Action", "Actor", "Effect", "Evidence", "Victim"]
 
 
-# --- Placeholder Prediction Functions ---
 
 def predict_conspiracy(text: str) -> str:
     """
@@ -28,8 +24,6 @@ def predict_conspiracy(text: str) -> str:
     Returns:
         The predicted label: "Yes" or "No".
     """
-    # *** REPLACE THIS WITH REAL MODEL INFERENCE ***
-    # For a simple baseline, we return the most common label
     return "No"
 
 
@@ -48,18 +42,10 @@ def predict_markers(doc_id: str, text: str) -> List[Dict[str, Any]]:
     all_markers = []
 
     for marker_type in MARKER_TYPES:
-        # *** REPLACE THIS WITH REAL MODEL INFERENCE ***
-        # 1. Load the model specific to 'marker_type'
-        # model = load_model(marker_type)
 
-        # 2. Perform prediction (e.g., sequence labeling -> span extraction)
-        # raw_predictions = model.predict(text)
 
-        # 3. Convert raw predictions to marker format:
-        # [{"startIndex": 10, "endIndex": 20, "type": marker_type, "text": "..."}]
 
-        # For a simple baseline, we return an empty list.
-        pass  # Returning an empty list of markers per document
+        pass
 
     return all_markers
 
@@ -71,15 +57,12 @@ def process_document(item: Dict[str, Any]) -> Dict[str, Any]:
     text = item.get('text', '')
 
     if not doc_id or not text:
-        return None  # Skip documents without ID or text
+        return None
 
-    # 1. Predict Binary Label
     conspiracy_pred = predict_conspiracy(text)
 
-    # 2. Predict Spans
     marker_preds = predict_markers(doc_id, text)
 
-    # 3. Assemble final submission format
     return {
         "_id": doc_id,
         "conspiracy": conspiracy_pred,
@@ -87,7 +70,6 @@ def process_document(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-# --- I/O and Packaging ---
 
 def load_jsonl(file_path: str) -> List[Dict[str, Any]] | None:
     """Loads all data from a JSONL file."""
@@ -109,18 +91,15 @@ def load_jsonl(file_path: str) -> List[Dict[str, Any]] | None:
 def save_and_zip(file_path: str, data: List[Dict], output_zip_path: str):
     """Saves the list of dictionaries to a JSONL file and zips it."""
 
-    # 1. Save to temporary submission.jsonl file
     print(f"Saving submission content to temporary file: {file_path}")
     with open(file_path, 'w', encoding='utf-8') as f:
         for item in data:
             f.write(json.dumps(item) + '\n')
 
-    # 2. Create the ZIP archive
     print(f"Creating ZIP archive: {output_zip_path}")
     with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.write(file_path, arcname=TEMP_SUBMISSION_FILE)
 
-    # 3. Clean up the temporary file
     os.remove(file_path)
 
     print(f"Successfully created final submission ZIP file: {output_zip_path}")
@@ -161,7 +140,6 @@ if __name__ == "__main__":
 
     final_submission = []
 
-    # Run predictions document by document
     for item in input_data:
         prediction_doc = process_document(item)
         if prediction_doc:
@@ -169,7 +147,6 @@ if __name__ == "__main__":
 
     print(f"Completed predictions for {len(final_submission)} documents.")
 
-    # Save and zip the result
     save_and_zip(
         TEMP_SUBMISSION_FILE,
         final_submission,

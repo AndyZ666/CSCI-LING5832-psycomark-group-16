@@ -1,9 +1,22 @@
 import json
-from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import TrainingArguments, Trainer
 from datasets import Dataset
 import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
+def compute_metrics(pred):
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
+    acc = accuracy_score(labels, preds)
+    return {
+        'accuracy': acc,
+        'f1': f1,
+        'precision': precision,
+        'recall': recall
+    }
 
 def load_and_filter_data(file_path):
     """Loads data from a JSON file and filters out entries with 'Can't tell'."""
@@ -49,33 +62,34 @@ def save_predictions(trainer, test_dataset, output_file):
 
 if __name__ == "__main__":
     train_file = "train_rehydrated.jsonl"
-    model_name = "distilbert-base-uncased"
-    output_dir = "distilbert-conspiracy-classification"
+    model_name = "roberta-base"
+    output_dir = "roberta-conspiracy-classification"
     label_to_id = {"No": 0, "Yes": 1}
     id_to_label = {0: "No", 1: "Yes"}
     num_labels = len(label_to_id)
     batch_size = 16
     learning_rate = 2e-5
-    num_epochs = 10
+    num_epochs = 5
 
-    # Load and filter data
     train_data = load_and_filter_data(train_file)
+    
+    full_dataset = Dataset.from_list(train_data)
+    
+    train_testvalid = full_dataset.train_test_split(test_size=0.2, seed=42)
+    train_dataset = train_testvalid['train']
+    eval_dataset = train_testvalid['test']
 
-    # Convert to Hugging Face Datasets
-    train_dataset = Dataset.from_list(train_data)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    # Load tokenizer
-    tokenizer = DistilBertTokenizerFast.from_pretrained(model_name)
-
-    # Tokenize and encode labels
     tokenized_train_dataset = tokenize_data(train_dataset, tokenizer)
     encoded_train_dataset = encode_labels(tokenized_train_dataset, label_to_id)
+    
+    tokenized_eval_dataset = tokenize_data(eval_dataset, tokenizer)
+    encoded_eval_dataset = encode_labels(tokenized_eval_dataset, label_to_id)
 
-    # Load the model
-    model = DistilBertForSequenceClassification.from_pretrained(model_name, num_labels=num_labels, id2label=id_to_label,
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels, id2label=id_to_label,
                                                                 label2id=label_to_id)
 
-    # Define training arguments
     training_args = TrainingArguments(
         output_dir=output_dir,
         learning_rate=learning_rate,
@@ -83,19 +97,23 @@ if __name__ == "__main__":
         per_device_eval_batch_size=batch_size,
         num_train_epochs=num_epochs,
         weight_decay=0.01,
-        logging_dir='./logs',
-        report_to="none"
+        logging_dir='./logs_roberta',
+        report_to="none",
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
+        metric_for_best_model="f1"
     )
 
-    # Create Trainer instance
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=encoded_train_dataset,
-        tokenizer=tokenizer
+        eval_dataset=encoded_eval_dataset,
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics
     )
 
-    # Train the model
     print("Training the model...")
     trainer.train()
     print("Training finished.")
